@@ -1,40 +1,59 @@
-name: Build MiMu APK
+
+name: Build MiMu 1.5.0 APK from source ZIP
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
         with:
-          packages: ''
+          cmdline-tools-version: 11076708
+          accept-android-sdk-licenses: true
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Extract source
-        run: unzip -oq MiMu-1.5.0-source.zip -d source
-
-      - name: Install SDK
+      - name: Extract MiMu source ZIP
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-          yes | sdkmanager --licenses
+          set -eu
+          ZIP_FILE="$(find . -maxdepth 5 -type f -name 'MiMu-1.5.0-source-fixed.zip' -print -quit)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "MiMu-1.5.0-source-fixed.zip not found"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/mimu-source"
+          unzip -oq "$ZIP_FILE" -d "$RUNNER_TEMP/mimu-source"
+          PROJECT_DIR="$RUNNER_TEMP/mimu-source/MiMu"
+          test -f "$PROJECT_DIR/gradlew"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Build APK
         run: |
-          cd source/MiMu
+          cd "$PROJECT_DIR"
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew --no-daemon --stacktrace assembleDebug
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: MiMu-1.5.0-APK
-          path: source/MiMu/app/build/outputs/apk/debug/*.apk
+          path: ${{ runner.temp }}/mimu-source/MiMu/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+          
