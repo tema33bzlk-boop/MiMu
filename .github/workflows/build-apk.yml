@@ -25,68 +25,50 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 11076708
+          accept-android-sdk-licenses: true
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Install SDK components
-        run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Extract ZIP source
+      - name: Find and extract source ZIP
         run: |
           set -eu
 
-          ZIP_FILE="$(find . -maxdepth 3 -type f \
+          ZIP_FILE="$(find . -maxdepth 4 -type f \
             -name 'MiMu-1.3.0-source.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: MiMu-1.3.0-source.zip not found!"
-            echo "Files in repository:"
+            echo "Source ZIP not found in repository!"
             find . -maxdepth 3 -type f
             exit 1
           fi
 
-          mkdir -p "$GITHUB_WORKSPACE/mimu-src"
-          unzip -oq "$ZIP_FILE" -d "$GITHUB_WORKSPACE/mimu-src"
+          mkdir -p "$RUNNER_TEMP/mimu-source"
+          unzip -oq "$ZIP_FILE" -d "$RUNNER_TEMP/mimu-source"
 
-          echo "ZIP extracted successfully."
+          PROJECT_DIR="$RUNNER_TEMP/mimu-source/MiMu"
 
-      - name: Locate Gradle project
-        run: |
-          set -eu
-
-          GRADLEW="$(find "$GITHUB_WORKSPACE/mimu-src" \
-            -type f -name gradlew -print -quit)"
-
-          if [ -z "$GRADLEW" ]; then
-            echo "ERROR: gradlew not found inside ZIP!"
-            find "$GITHUB_WORKSPACE/mimu-src" -maxdepth 4 -type f
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$GRADLEW")"
-
-          if [ ! -f "$PROJECT_DIR/settings.gradle" ] &&
-             [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
-            echo "ERROR: Gradle settings file not found!"
+          if [ ! -f "$PROJECT_DIR/gradlew" ]; then
+            echo "gradlew not found!"
+            find "$RUNNER_TEMP/mimu-source" -maxdepth 4 -type f
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found project: $PROJECT_DIR"
 
-      - name: Build debug APK
+      - name: Build APK
         run: |
-          set -eu
           cd "$PROJECT_DIR"
-          chmod +x ./gradlew
+          chmod +x gradlew
           ./gradlew --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: MiMu-1.3.0-APK
-          path: mimu-src/**/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ runner.temp }}/mimu-source/MiMu/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
           
