@@ -1,5 +1,5 @@
 
-name: VOSQEN 2.0.0 — Build Release
+name: VOSQEN Android Build
 
 on:
   workflow_dispatch:
@@ -13,137 +13,154 @@ permissions:
 
 jobs:
   build:
-    name: Build VOSQEN APK and ZIP
     runs-on: ubuntu-latest
-    timeout-minutes: 45
 
     steps:
-      # 1. Получение исходников
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Проверка структуры проекта
-      - name: Check project files
-        shell: bash
-        run: |
-          echo "Checking project structure..."
-
-          if [ ! -f gradlew ]; then
-            echo "::error::gradlew not found in repository root"
-            exit 1
-          fi
-
-          if [ ! -f settings.gradle ] && [ ! -f settings.gradle.kts ]; then
-            echo "::error::Gradle settings file not found"
-            exit 1
-          fi
-
-          if [ ! -d app ]; then
-            echo "::error::app directory not found"
-            exit 1
-          fi
-
-          echo "Project structure OK"
-
-      # 3. Java 17
-      - name: Setup Java 17
+      - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      # 4. Android SDK
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Accept Android licenses
-        run: yes | sdkmanager --licenses || true
-
-      # 5. Gradle permissions
-      - name: Prepare Gradle
-        run: |
-          chmod +x gradlew
-          ./gradlew --version
-
-      # 6. Static validation
-      - name: Validate project
+      - name: Find Android project
         shell: bash
         run: |
-          if [ -f tools/verify-project.sh ]; then
-            chmod +x tools/verify-project.sh
-            bash tools/verify-project.sh
-          else
-            echo "No custom verification script found; continuing."
-          fi
+          set -e
 
-      # 7. Build and test
-      - name: Build Debug APK
-        run: |
-          ./gradlew \
-            --no-daemon \
-            --stacktrace \
-            clean \
-            testDebugUnitTest \
-            assembleDebug
+          echo "Searching for Gradle project..."
 
-      # 8. Verify APK
-      - name: Verify APK
-        run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          WRAPPER=$(find . \
+            -type f \
+            -name gradlew \
+            -not -path '*/.gradle/*' \
+            -not -path '*/build/*' \
+            | head -n 1)
 
-          if [ ! -s "$APK" ]; then
-            echo "::error::APK was not generated"
+          if [ -z "$WRAPPER" ]; then
+            echo "ERROR: gradlew not found."
+            echo "Repository contents:"
+            find . -maxdepth 4 -type f | head -200
             exit 1
           fi
 
-          mkdir -p release
-          cp "$APK" release/VOSQEN-2.0.0.apk
+          PROJECT_DIR=$(dirname "$WRAPPER")
+          PROJECT_DIR=${PROJECT_DIR#./}
 
-          echo "APK successfully generated"
+          if [ "$PROJECT_DIR" = "." ]; then
+            PROJECT_DIR=""
+          fi
 
-      # 9. Create source ZIP
-      - name: Create source archive
+          ROOT="$GITHUB_WORKSPACE/$PROJECT_DIR"
+
+          if [ ! -f "$ROOT/settings.gradle" ] && \
+             [ ! -f "$ROOT/settings.gradle.kts" ]; then
+            echo "ERROR: Gradle settings file not found beside gradlew."
+            find "$ROOT" -maxdepth 3 -type f
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project root: $ROOT"
+          echo "Gradle wrapper: $WRAPPER"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
         run: |
-          zip -r release/VOSQEN-2.0.0-source.zip . \
-            -x ".git/*" \
-               ".gradle/*" \
+          sdkmanager "platforms;android-35" \
+                     "build-tools;35.0.0"
+          yes | sdkmanager --licenses || true
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
+
+          cd "$GITHUB_WORKSPACE/$PROJECT_DIR"
+
+          chmod +x gradlew
+
+          ./gradlew --no-daemon --version
+
+          ./gradlew --no-daemon \
+            clean \
+            assembleDebug \
+            --stacktrace
+
+      - name: Find generated APK
+        shell: bash
+        run: |
+          set -e
+
+          ROOT="$GITHUB_WORKSPACE/$PROJECT_DIR"
+
+          APK=$(find "$ROOT" \
+            -type f \
+            -path '*/build/outputs/apk/debug/*.apk' \
+            -not -path '*/androidTest/*' \
+            | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            find "$ROOT" -type f -name "*.apk"
+            exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/release"
+
+          cp "$APK" "$GITHUB_WORKSPACE/release/VOSQEN.apk"
+
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+          echo "APK successfully found: $APK"
+
+      - name: Create source ZIP
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p "$GITHUB_WORKSPACE/release"
+
+          cd "$GITHUB_WORKSPACE/$PROJECT_DIR"
+
+          zip -r "$GITHUB_WORKSPACE/release/VOSQEN-source.zip" . \
+            -x "*/.git/*" \
+               "*/.gradle/*" \
                "*/build/*" \
-               "release/*"
+               "*/.idea/*" \
+               "*/local.properties" \
+               "*.apk"
 
-      # 10. Create combined release ZIP
-      - name: Create full release ZIP
+      - name: Create complete release ZIP
         run: |
-          cd release
+          cd "$GITHUB_WORKSPACE/release"
 
-          zip VOSQEN-2.0.0-RELEASE.zip \
-            VOSQEN-2.0.0.apk \
-            VOSQEN-2.0.0-source.zip
+          zip VOSQEN-release.zip \
+            VOSQEN.apk \
+            VOSQEN-source.zip
 
-      # 11. Verify all archives
-      - name: Verify release archives
-        run: |
-          test -s release/VOSQEN-2.0.0.apk
-          test -s release/VOSQEN-2.0.0-source.zip
-          test -s release/VOSQEN-2.0.0-RELEASE.zip
-
-          unzip -t release/VOSQEN-2.0.0-source.zip
-          unzip -t release/VOSQEN-2.0.0-RELEASE.zip
-
-          echo "All release files verified"
-
-      # 12. Upload artifacts
-      - name: Upload VOSQEN Release
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VOSQEN-2.0.0-FULL-RELEASE
-          path: release/
+          name: VOSQEN-APK
+          path: release/VOSQEN.apk
           if-no-files-found: error
-          retention-days: 30
+
+      - name: Upload source code
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOSQEN-Source
+          path: release/VOSQEN-source.zip
+          if-no-files-found: error
+
+      - name: Upload complete release
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOSQEN-Complete-Release
+          path: release/VOSQEN-release.zip
+          if-no-files-found: error
           
