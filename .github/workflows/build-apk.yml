@@ -1,4 +1,3 @@
-
 name: VOSQEN Android Build
 
 on:
@@ -25,14 +24,37 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Find Android project
+      - name: Extract VOSQEN source
         shell: bash
         run: |
           set -e
 
-          echo "Searching for Gradle project..."
+          SOURCE_ZIP="VOSQEN-2.0.0-source.zip"
 
-          WRAPPER=$(find . \
+          if [ ! -f "$SOURCE_ZIP" ]; then
+            echo "ERROR: $SOURCE_ZIP not found."
+            echo "ZIP files in repository:"
+            find . -maxdepth 3 -type f -iname "*.zip"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/vosqen-source"
+          unzip -q "$SOURCE_ZIP" -d "$RUNNER_TEMP/vosqen-source"
+
+          echo "Extracted source:"
+          find "$RUNNER_TEMP/vosqen-source" \
+            -maxdepth 4 \
+            -type f \
+            | head -200
+
+      - name: Find Gradle project
+        shell: bash
+        run: |
+          set -e
+
+          SEARCH_DIR="$RUNNER_TEMP/vosqen-source"
+
+          WRAPPER=$(find "$SEARCH_DIR" \
             -type f \
             -name gradlew \
             -not -path '*/.gradle/*' \
@@ -40,47 +62,42 @@ jobs:
             | head -n 1)
 
           if [ -z "$WRAPPER" ]; then
-            echo "ERROR: gradlew not found."
-            echo "Repository contents:"
-            find . -maxdepth 4 -type f | head -200
+            echo "ERROR: gradlew not found inside source ZIP."
+            echo "Searching for Gradle settings files:"
+            find "$SEARCH_DIR" \
+              -type f \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \)
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$WRAPPER")
-          PROJECT_DIR=${PROJECT_DIR#./}
 
-          if [ "$PROJECT_DIR" = "." ]; then
-            PROJECT_DIR=""
-          fi
-
-          ROOT="$GITHUB_WORKSPACE/$PROJECT_DIR"
-
-          if [ ! -f "$ROOT/settings.gradle" ] && \
-             [ ! -f "$ROOT/settings.gradle.kts" ]; then
+          if [ ! -f "$PROJECT_DIR/settings.gradle" ] && \
+             [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
             echo "ERROR: Gradle settings file not found beside gradlew."
-            find "$ROOT" -maxdepth 3 -type f
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project root: $ROOT"
-          echo "Gradle wrapper: $WRAPPER"
+
+          echo "Gradle project found:"
+          echo "$PROJECT_DIR"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 35
+      - name: Install Android SDK
         run: |
           sdkmanager "platforms;android-35" \
                      "build-tools;35.0.0"
           yes | sdkmanager --licenses || true
 
-      - name: Build APK
+      - name: Build debug APK
         shell: bash
         run: |
           set -e
 
-          cd "$GITHUB_WORKSPACE/$PROJECT_DIR"
+          cd "$PROJECT_DIR"
 
           chmod +x gradlew
 
@@ -91,22 +108,20 @@ jobs:
             assembleDebug \
             --stacktrace
 
-      - name: Find generated APK
+      - name: Locate APK
         shell: bash
         run: |
           set -e
 
-          ROOT="$GITHUB_WORKSPACE/$PROJECT_DIR"
-
-          APK=$(find "$ROOT" \
+          APK=$(find "$PROJECT_DIR" \
             -type f \
             -path '*/build/outputs/apk/debug/*.apk' \
             -not -path '*/androidTest/*' \
             | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
-            find "$ROOT" -type f -name "*.apk"
+            echo "ERROR: APK not generated."
+            find "$PROJECT_DIR" -type f -name "*.apk"
             exit 1
           fi
 
@@ -114,18 +129,14 @@ jobs:
 
           cp "$APK" "$GITHUB_WORKSPACE/release/VOSQEN.apk"
 
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
-
-          echo "APK successfully found: $APK"
+          echo "APK created: $APK"
 
       - name: Create source ZIP
         shell: bash
         run: |
           set -e
 
-          mkdir -p "$GITHUB_WORKSPACE/release"
-
-          cd "$GITHUB_WORKSPACE/$PROJECT_DIR"
+          cd "$PROJECT_DIR"
 
           zip -r "$GITHUB_WORKSPACE/release/VOSQEN-source.zip" . \
             -x "*/.git/*" \
@@ -136,7 +147,10 @@ jobs:
                "*.apk"
 
       - name: Create complete release ZIP
+        shell: bash
         run: |
+          set -e
+
           cd "$GITHUB_WORKSPACE/release"
 
           zip VOSQEN-release.zip \
@@ -150,7 +164,7 @@ jobs:
           path: release/VOSQEN.apk
           if-no-files-found: error
 
-      - name: Upload source code
+      - name: Upload source ZIP
         uses: actions/upload-artifact@v4
         with:
           name: VOSQEN-Source
