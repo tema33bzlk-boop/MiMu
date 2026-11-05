@@ -1,3 +1,4 @@
+
 name: VOSQEN Android Build
 
 on:
@@ -33,7 +34,6 @@ jobs:
 
           if [ ! -f "$SOURCE_ZIP" ]; then
             echo "ERROR: $SOURCE_ZIP not found."
-            echo "ZIP files in repository:"
             find . -maxdepth 3 -type f -iname "*.zip"
             exit 1
           fi
@@ -41,11 +41,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/vosqen-source"
           unzip -q "$SOURCE_ZIP" -d "$RUNNER_TEMP/vosqen-source"
 
-          echo "Extracted source:"
-          find "$RUNNER_TEMP/vosqen-source" \
-            -maxdepth 4 \
-            -type f \
-            | head -200
+          echo "Source extracted successfully."
 
       - name: Find Gradle project
         shell: bash
@@ -63,10 +59,7 @@ jobs:
 
           if [ -z "$WRAPPER" ]; then
             echo "ERROR: gradlew not found inside source ZIP."
-            echo "Searching for Gradle settings files:"
-            find "$SEARCH_DIR" \
-              -type f \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \)
+            find "$SEARCH_DIR" -maxdepth 5 -type f
             exit 1
           fi
 
@@ -74,25 +67,35 @@ jobs:
 
           if [ ! -f "$PROJECT_DIR/settings.gradle" ] && \
              [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
-            echo "ERROR: Gradle settings file not found beside gradlew."
+            echo "ERROR: Gradle settings file not found."
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Gradle project found:"
-          echo "$PROJECT_DIR"
+          echo "Project root: $PROJECT_DIR"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
+        shell: bash
         run: |
-          sdkmanager "platforms;android-35" \
-                     "build-tools;35.0.0"
-          yes | sdkmanager --licenses || true
+          set -e
 
-      - name: Build debug APK
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+
+          "$SDK/cmdline-tools/16.0/bin/sdkmanager" \
+            --sdk_root="$SDK" \
+            --licenses
+
+          "$SDK/cmdline-tools/16.0/bin/sdkmanager" \
+            --sdk_root="$SDK" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Build VOSQEN APK
         shell: bash
         run: |
           set -e
@@ -120,7 +123,7 @@ jobs:
             | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK not generated."
+            echo "ERROR: APK was not generated."
             find "$PROJECT_DIR" -type f -name "*.apk"
             exit 1
           fi
@@ -129,7 +132,9 @@ jobs:
 
           cp "$APK" "$GITHUB_WORKSPACE/release/VOSQEN.apk"
 
-          echo "APK created: $APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+          echo "APK successfully created."
 
       - name: Create source ZIP
         shell: bash
